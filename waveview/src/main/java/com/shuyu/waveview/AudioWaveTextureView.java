@@ -7,11 +7,14 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
+import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
 import android.os.Handler;
 import android.os.Message;
 import android.support.annotation.NonNull;
 import android.util.AttributeSet;
-import android.util.Log;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewTreeObserver;
 
@@ -31,7 +34,7 @@ import java.util.List;
  * Created by shuyu on 2016/11/15.
  */
 
-public class AudioWaveView extends View {
+public class AudioWaveTextureView extends TextureView {
 
 
     public static final String MAX = "max_volume"; //map中的key
@@ -41,13 +44,9 @@ public class AudioWaveView extends View {
 
     private Context mContext;
 
-    private Bitmap mBitmap, mBackgroundBitmap;
+    private Bitmap mBackgroundBitmap;
 
     private Paint mPaint;
-
-    private Paint mViewPaint;
-
-    private Canvas mCanvas = new Canvas();
 
     private Canvas mBackCanVans = new Canvas();
 
@@ -58,8 +57,11 @@ public class AudioWaveView extends View {
     private BaseRecorder mBaseRecorder;
 
     private int mWidthSpecSize;
+
     private int mHeightSpecSize;
+
     private int mScale = 1;
+
     private int mBaseLine;
 
     private int mOffset = -11;//波形之间线与线的间隔
@@ -70,7 +72,7 @@ public class AudioWaveView extends View {
 
     private boolean mDrawBase = true;
 
-    private boolean mDrawReverse = false;//绘制反方向
+    private boolean mDrawReverse = false;//反方向
 
     private boolean mDataReverse = false;//数据反方向
 
@@ -84,6 +86,8 @@ public class AudioWaveView extends View {
 
     private int mColorChangeFlag;
 
+    private int mColorBack = Color.TRANSPARENT;
+
     private int mColor1 = Color.argb(0xfa, 0x6f, 0xff, 0x81);
 
     private int mColor2 = Color.argb(0xfa, 0xff, 0xff, 0xff);
@@ -92,25 +96,21 @@ public class AudioWaveView extends View {
 
     private int mDrawStartOffset = 0;
 
+    private Surface mSurface;
 
-    Handler handler = new Handler() {
-        @Override
-        public void handleMessage(Message msg) {
-            AudioWaveView.this.invalidate();
-        }
-    };
+    private Rect mRect = new Rect();
 
-    public AudioWaveView(Context context) {
+    public AudioWaveTextureView(Context context) {
         super(context);
         init(context, null);
     }
 
-    public AudioWaveView(Context context, AttributeSet attrs) {
+    public AudioWaveTextureView(Context context, AttributeSet attrs) {
         super(context, attrs);
         init(context, attrs);
     }
 
-    public AudioWaveView(Context context, AttributeSet attrs, int defStyleAttr) {
+    public AudioWaveTextureView(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
         init(context, attrs);
     }
@@ -120,9 +120,6 @@ public class AudioWaveView extends View {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         mIsDraw = false;
-        if (mBitmap != null && !mBitmap.isRecycled()) {
-            mBitmap.recycle();
-        }
         if (mBackgroundBitmap != null && !mBackgroundBitmap.isRecycled()) {
             mBackgroundBitmap.recycle();
         }
@@ -137,6 +134,7 @@ public class AudioWaveView extends View {
             TypedArray ta = getContext().obtainStyledAttributes(attrs, R.styleable.waveView);
             mOffset = ta.getInt(R.styleable.waveView_waveOffset, dip2px(context, -11));
             mWaveColor = ta.getColor(R.styleable.waveView_waveColor, Color.WHITE);
+            mColorBack = ta.getColor(R.styleable.waveView_texture_bg_waveColor, Color.TRANSPARENT);
             mWaveCount = ta.getInt(R.styleable.waveView_waveCount, 2);
             ta.recycle();
         }
@@ -152,14 +150,49 @@ public class AudioWaveView extends View {
         }
 
         mPaint = new Paint();
-        mViewPaint = new Paint();
         mPaint.setColor(mWaveColor);
+
+        setSurfaceTextureListener(new SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                mSurface = new Surface(surface);
+                updateBackground();
+
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                synchronized (mLock) {
+                    mSurface = null;
+                }
+                return false;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+
+            }
+        });
 
     }
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        mRect.top = top;
+        mRect.left = left;
+        mRect.right = right;
+        mRect.bottom = bottom;
     }
 
     @Override
@@ -175,15 +208,23 @@ public class AudioWaveView extends View {
                         mHeightSpecSize = getHeight();
                         mBaseLine = mHeightSpecSize / 2;
                         mBackgroundBitmap = Bitmap.createBitmap(mWidthSpecSize, mHeightSpecSize, Bitmap.Config.ARGB_8888);
-                        mBitmap = Bitmap.createBitmap(mWidthSpecSize, mHeightSpecSize, Bitmap.Config.ARGB_8888);
                         mBackCanVans.setBitmap(mBackgroundBitmap);
-                        mCanvas.setBitmap(mBitmap);
                         ViewTreeObserver vto = getViewTreeObserver();
                         vto.removeOnPreDrawListener(this);
                     }
                     return true;
                 }
             });
+        }
+    }
+
+    private void updateBackground() {
+        synchronized (mLock) {
+            if (mSurface != null) {
+                Canvas canvas = mSurface.lockCanvas(mRect);
+                canvas.drawColor(mColorBack);
+                mSurface.unlockCanvasAndPost(canvas);
+            }
         }
     }
 
@@ -213,12 +254,12 @@ public class AudioWaveView extends View {
                     updateColor();
                 }
                 if (mBackCanVans != null) {
-                    mBackCanVans.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+                    mBackCanVans.drawColor(mColorBack, PorterDuff.Mode.CLEAR);
+                    mBackCanVans.drawColor(mColorBack);
                     int drawBufsize = dataList.size();
-
+                    /*判断大小，是否改变显示的比例*/
                     int startPosition = (mDrawReverse) ? mWidthSpecSize - mDrawStartOffset : mDrawStartOffset;
                     int jOffset = (mDrawReverse) ? -mOffset : mOffset;
-
                     if (mDrawBase) {
                         if (mDataReverse) {
                             mBackCanVans.drawLine(startPosition, mBaseLine, 0, mBaseLine, mPaint);
@@ -226,7 +267,6 @@ public class AudioWaveView extends View {
                             mBackCanVans.drawLine(startPosition, mBaseLine, mWidthSpecSize, mBaseLine, mPaint);
                         }
                     }
-
                     if (mDataReverse) {
                         for (int i = drawBufsize - 1, j = startPosition; i >= 0; i--, j += jOffset) {
                             Short sh = dataList.get(i);
@@ -238,14 +278,17 @@ public class AudioWaveView extends View {
                             drawNow(sh, j);
                         }
                     }
-                    synchronized (mLock) {
-                        mCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-                        mCanvas.drawBitmap(mBackgroundBitmap, 0, 0, mPaint);
-                    }
 
-                    Message msg = new Message();
-                    msg.what = 0;
-                    handler.sendMessage(msg);
+                    if (mSurface != null) {
+                        synchronized (mLock) {
+                            if (mSurface != null && mIsDraw) {
+                                Canvas canvas = mSurface.lockCanvas(mRect);
+                                canvas.drawColor(mColorBack, PorterDuff.Mode.CLEAR);
+                                canvas.drawBitmap(mBackgroundBitmap, 0, 0, mPaint);
+                                mSurface.unlockCanvasAndPost(canvas);
+                            }
+                        }
+                    }
                 }
                 //休眠暂停资源
                 try {
@@ -291,17 +334,6 @@ public class AudioWaveView extends View {
     }
 
 
-    @Override
-    protected void onDraw(Canvas c) {
-        super.onDraw(c);
-        if (mIsDraw && mBitmap != null) {
-            synchronized (mLock) {
-                c.drawBitmap(mBitmap, 0, 0, mViewPaint);
-            }
-        }
-    }
-
-
     /**
      * 更具当前块数据来判断缩放音频显示的比例
      *
@@ -328,8 +360,7 @@ public class AudioWaveView extends View {
         if (mInnerThread != null && mInnerThread.isAlive()) {
             mIsDraw = false;
             while (mInnerThread.isAlive()) ;
-            mBackCanVans.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-            mCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+            mBackCanVans.drawColor(mColorBack, PorterDuff.Mode.CLEAR);
         }
         mIsDraw = true;
         mInnerThread = new drawThread();
@@ -345,8 +376,7 @@ public class AudioWaveView extends View {
         if (mInnerThread != null) {
             while (mInnerThread.isAlive()) ;
         }
-        mBackCanVans.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        mCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+        mBackCanVans.drawColor(mColorBack, PorterDuff.Mode.CLEAR);
     }
 
     private void updateColor() {
@@ -469,16 +499,6 @@ public class AudioWaveView extends View {
     }
 
     /**
-     * 设置自定义的paint
-     */
-    public void setLinePaint(Paint paint) {
-        if (paint != null) {
-            mPaint = paint;
-        }
-    }
-
-
-    /**
      * 设置波形颜色
      *
      * @param waveCount 波形数量 1或者2
@@ -489,6 +509,15 @@ public class AudioWaveView extends View {
             mWaveCount = 1;
         } else if (mWaveCount > 2) {
             mWaveCount = 2;
+        }
+    }
+
+    /**
+     * 设置自定义的paint
+     */
+    public void setLinePaint(Paint paint) {
+        if (paint != null) {
+            mPaint = paint;
         }
     }
 
@@ -509,7 +538,6 @@ public class AudioWaveView extends View {
         mDrawBase = drawBase;
     }
 
-
     /**
      * 绘制相反方向
      */
@@ -524,11 +552,18 @@ public class AudioWaveView extends View {
         this.mDataReverse = dataReverse;
     }
 
-
     /**
      * 绘制开始偏移量
      */
     public void setDrawStartOffset(int drawStartOffset) {
         this.mDrawStartOffset = drawStartOffset;
+    }
+
+    /**
+     * 背景颜色
+     */
+    public void setColorBack(int colorBack) {
+        this.mColorBack = colorBack;
+        updateBackground();
     }
 }

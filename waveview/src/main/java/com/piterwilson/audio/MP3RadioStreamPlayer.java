@@ -54,6 +54,8 @@ public class MP3RadioStreamPlayer extends BaseRecorder {
     private int maxSize;
 
     private int seekOffset = 0;
+    //波形速度
+    private int mWaveSpeed = 300;
 
     private boolean seekOffsetFlag = false;
 
@@ -66,6 +68,8 @@ public class MP3RadioStreamPlayer extends BaseRecorder {
     private long duration;
 
     private long curPosition;
+
+    private long startWaveTime = 0;
 
 
     /**
@@ -149,7 +153,9 @@ public class MP3RadioStreamPlayer extends BaseRecorder {
         doStop = false;
         bufIndexCheck = 0;
         lastInputBufIndex = -1;
-
+        if(startWaveTime > 0) {
+            seekOffsetFlag = true;
+        }
         myTimerTask = new CheckProgressTimerTask();
         myTimer = new Timer();
         myTimer.scheduleAtFixedRate(myTimerTask, 0, 1000); //(timertask,delay,period)
@@ -327,7 +333,8 @@ public class MP3RadioStreamPlayer extends BaseRecorder {
             if (!sawInputEOS) {
                 if (seekOffsetFlag) {
                     seekOffsetFlag = false;
-                    extractor.seekTo(seekOffset, SEEK_TO_PREVIOUS_SYNC);
+                    long seek = (startWaveTime > seekOffset) ? startWaveTime : seekOffset;
+                    extractor.seekTo(seek, SEEK_TO_PREVIOUS_SYNC);
                 }
 
                 inputBufIndex = codec.dequeueInputBuffer(kTimeOutUs);
@@ -530,22 +537,24 @@ public class MP3RadioStreamPlayer extends BaseRecorder {
 
     private void sendData(short[] shorts, int readSize) {
         if (dataList != null) {
-            int length = readSize / 300;
-            short resultMax = 0, resultMin = 0;
-            for (short i = 0, k = 0; i < length; i++, k += 300) {
-                for (short j = k, max = 0, min = 1000; j < k + 300; j++) {
-                    if (shorts[j] > max) {
-                        max = shorts[j];
-                        resultMax = max;
-                    } else if (shorts[j] < min) {
-                        min = shorts[j];
-                        resultMin = min;
+            if(getCurPosition() >= startWaveTime) {
+                int length = readSize / mWaveSpeed;
+                short resultMax = 0, resultMin = 0;
+                for (short i = 0, k = 0; i < length; i++, k += mWaveSpeed) {
+                    for (short j = k, max = 0, min = 1000; j < k + mWaveSpeed; j++) {
+                        if (shorts[j] > max) {
+                            max = shorts[j];
+                            resultMax = max;
+                        } else if (shorts[j] < min) {
+                            min = shorts[j];
+                            resultMin = min;
+                        }
                     }
+                    if (dataList.size() > maxSize) {
+                        dataList.remove(0);
+                    }
+                    dataList.add(resultMax);
                 }
-                if (dataList.size() > maxSize) {
-                    dataList.remove(0);
-                }
-                dataList.add(resultMax);
             }
         }
     }
@@ -624,5 +633,28 @@ public class MP3RadioStreamPlayer extends BaseRecorder {
 
     public long getCurPosition() {
         return curPosition;
+    }
+
+    public long getStartWaveTime() {
+        return startWaveTime;
+    }
+
+    /**
+     * 设置开始绘制波形的启始时间,播放前设置，不会被清空
+     * @param startWaveTime 毫秒
+     * */
+    public void setStartWaveTime(long startWaveTime) {
+        this.startWaveTime = startWaveTime * 1000;
+    }
+
+    /**
+     * pcm数据的速度，默认300
+     * 数据越大，速度越慢
+     */
+    public void setWaveSpeed(int waveSpeed) {
+        if (mWaveSpeed <= 0) {
+            return;
+        }
+        this.mWaveSpeed = waveSpeed;
     }
 }
